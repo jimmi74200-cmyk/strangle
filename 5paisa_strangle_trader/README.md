@@ -68,6 +68,14 @@ python trader.py
 
 The bot will then wait for the specified `ENTRY_TIME` to place the strangle order. It will also automatically square off all positions at the specified `EXIT_TIME`.
 
+### 5. Checking Your Profile
+
+You can use the `profile.py` script to fetch your account details and verify that your authentication is working correctly.
+
+```bash
+python 5paisa_strangle_trader/profile.py
+```
+
 ## Disclaimer
 
 This script is for educational purposes only. Use it at your own risk. The author is not responsible for any financial losses.
