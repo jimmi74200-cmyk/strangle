@@ -9,6 +9,7 @@ import threading
 import csv
 from os.path import isfile
 import os
+import re
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -39,7 +40,8 @@ def get_nearest_weekly_expiry(symbol):
         min_diff = float('inf')
 
         for expiry in expiry_dates['Expiry']:
-            expiry_date = datetime.datetime.fromtimestamp(int(expiry['ExpiryDate']) / 1000).date()
+            timestamp_str = re.search(r'\d+', expiry['ExpiryDate']).group(0)
+            expiry_date = datetime.datetime.fromtimestamp(int(timestamp_str) / 1000).date()
             diff = (expiry_date - today).days
             if 0 <= diff < min_diff:
                 min_diff = diff
