@@ -1,9 +1,15 @@
 from py5paisa import FivePaisaClient
 import config
+import os
 
 # This script will use the credentials from the config.py file
 # and the get_totp_session function to authenticate and get the access token.
 # The access token will then be saved to the config.py file.
+
+# --- Robust File Path ---
+script_dir = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(script_dir, 'config.py')
+# ------------------------
 
 client = FivePaisaClient(cred={
     "APP_NAME": config.APP_NAME,
@@ -24,11 +30,11 @@ if access_token:
     print("Login successful!")
 
     # Read the config file
-    with open("5paisa_strangle_trader/config.py", "r") as f:
+    with open(config_path, "r") as f:
         lines = f.readlines()
 
     # Update the access token and client code
-    with open("5paisa_strangle_trader/config.py", "w") as f:
+    with open(config_path, "w") as f:
         for line in lines:
             if line.strip().startswith("ACCESS_TOKEN"):
                 f.write(f'ACCESS_TOKEN = "{access_token}"\n')

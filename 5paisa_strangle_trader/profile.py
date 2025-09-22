@@ -1,6 +1,7 @@
 from py5paisa import FivePaisaClient
 import config
 import json
+import os
 
 # This script fetches and displays user profile details, specifically margin information.
 # It's a useful utility to check if your credentials and access token are working correctly.

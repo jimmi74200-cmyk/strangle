@@ -8,6 +8,7 @@ import json
 import threading
 import csv
 from os.path import isfile
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -365,7 +366,10 @@ def log_trade_to_csv(trade_data):
     """
     Logs the details of a completed trade to a CSV file.
     """
-    file_path = 'trade_log.csv'
+    # --- Robust File Path ---
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, 'trade_log.csv')
+    # ------------------------
     file_exists = isfile(file_path)
 
     with open(file_path, 'a', newline='') as csvfile:

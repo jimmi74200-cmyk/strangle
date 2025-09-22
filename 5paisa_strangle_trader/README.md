@@ -73,7 +73,7 @@ The bot will then wait for the specified `ENTRY_TIME` to place the strangle orde
 You can use the `profile.py` script to fetch your account details and verify that your authentication is working correctly.
 
 ```bash
-python 5paisa_strangle_trader/profile.py
+python profile.py
 ```
 
 ## Disclaimer

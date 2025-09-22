@@ -5,11 +5,17 @@ from urllib.parse import urlparse, parse_qs
 import threading
 from py5paisa import FivePaisaClient
 import config
+import os
 
 # Configuration
 PORT = 8888
 REDIRECT_URL = f"http://localhost:{PORT}/"
 request_token = None
+
+# --- Robust File Path ---
+script_dir = os.path.dirname(os.path.abspath(__file__))
+config_path = os.path.join(script_dir, 'config.py')
+# ------------------------
 
 class TokenHandler(http.server.SimpleHTTPRequestHandler):
     def do_GET(self):
@@ -69,11 +75,11 @@ if __name__ == "__main__":
             print("Login successful!")
 
             # Read the config file
-            with open("5paisa_strangle_trader/config.py", "r") as f:
+            with open(config_path, "r") as f:
                 lines = f.readlines()
 
             # Update the access token and client code
-            with open("5paisa_strangle_trader/config.py", "w") as f:
+            with open(config_path, "w") as f:
                 for line in lines:
                     if line.strip().startswith("ACCESS_TOKEN"):
                         f.write(f'ACCESS_TOKEN = "{access_token}"\n')
