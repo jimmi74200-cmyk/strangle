@@ -114,6 +114,27 @@ def select_strikes(option_chain, method, premium, spot_price):
         except Exception as e:
             logging.error(f"Error selecting strikes by nearest premium: {e}")
             return None, None
+    elif method == "EQUAL_PREMIUM_GAP":
+        try:
+            ce_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'CE'}
+            pe_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'PE'}
+
+            valid_pairs = []
+            for ce_strike, ce_premium in ce_options.items():
+                for pe_strike, pe_premium in pe_options.items():
+                    if abs(ce_strike - pe_strike) == config.STRANGLE_GAP_POINTS:
+                        premium_diff = abs(ce_premium - pe_premium)
+                        valid_pairs.append(((ce_strike, pe_strike), premium_diff))
+
+            if not valid_pairs:
+                logging.error("No valid pairs found for the given gap.")
+                return None, None
+
+            best_pair = min(valid_pairs, key=lambda x: x[1])
+            return best_pair[0]
+        except Exception as e:
+            logging.error(f"Error selecting strikes by equal premium gap: {e}")
+            return None, None
     else:
         strikes = sorted(list(set([o['StrikeRate'] for o in option_chain])))
         atm_strike = get_atm_strike(spot_price, strikes)
@@ -172,13 +193,14 @@ def place_strangle_order():
                                     entry_prices[p['ScripCode']] = p['SellAvg']
                                     stop_loss_price = p['SellAvg'] + config.LEG_WISE_SL_POINTS
 
+                                    limit_price = stop_loss_price + config.SL_LIMIT_BUFFER
                                     sl_order = client.place_order(
                                         OrderType='B',
                                         Exchange='N',
                                         ExchangeType='D',
                                         ScripCode=p['ScripCode'],
                                         Qty=p['NetQty'],
-                                        Price=0, # For SL-M, price is 0
+                                        Price=limit_price,
                                         StopLossPrice=stop_loss_price,
                                         IsIntraday=True
                                     )

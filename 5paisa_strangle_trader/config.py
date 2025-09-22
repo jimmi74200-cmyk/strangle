@@ -20,12 +20,14 @@ ENTRY_TIME = "09:30"
 EXIT_TIME = "15:15"
 
 # Strike Selection Parameters
-STRIKE_SELECTION_METHOD = "NEAREST_PREMIUM"  # ATM, OTM, ITM, NEAREST_PREMIUM
+STRIKE_SELECTION_METHOD = "NEAREST_PREMIUM"  # ATM, OTM, ITM, NEAREST_PREMIUM, EQUAL_PREMIUM_GAP
 PREMIUM = 100  # Desired premium for the NEAREST_PREMIUM method
 STRANGLE_STRIKE_DISTANCE = 2 # Number of strikes away from ATM for OTM/ITM strangles
+STRANGLE_GAP_POINTS = 200 # Fixed point gap for EQUAL_PREMIUM_GAP method
 
 # Risk management parameters
 LEG_WISE_SL_POINTS = 30  # Leg-wise stop-loss in points
+SL_LIMIT_BUFFER = 1  # Points to add to trigger price for SL-L limit price
 OVERALL_SL = -3000  # Overall stop-loss in currency amount
 OVERALL_TARGET = 7000  # Overall target in currency amount
 TRAILING_PROFIT_TRIGGER = 1500  # Profit level to trigger trailing stop-loss

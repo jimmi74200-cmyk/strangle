@@ -6,9 +6,9 @@ This project is a Python script that automates an intraday option strangle selli
 
 - Login with 5paisa API using OAuth 2.0
 - Automatically fetches the nearest weekly expiry for Nifty, Bank Nifty, etc.
-- Selects call and put strikes based on the nearest premium to a specific price.
+- Selects call and put strikes based on various methods: ATM, OTM, ITM, nearest premium, or a fixed point gap with equal premiums.
 - Places a short strangle order at a specific time (e.g., 9:30 AM).
--   Places exchange-level stop-loss orders for each leg.
+-   Places exchange-level Stop-Loss Limit (SL-L) orders for each leg for better reliability.
 -   Continuously monitors the overall P&L of the strategy.
 -   Squares off all positions if the overall stop-loss, target, or trailing stop-loss is hit.
 - Squares off all positions at a specific time (e.g., 3:15 PM).
@@ -27,7 +27,7 @@ This project is a Python script that automates an intraday option strangle selli
 ### 2. Configuration
 
 1.  Open the `config.py` file and fill in your 5paisa API credentials (`APP_NAME`, `APP_SOURCE`, `USER_ID`, `PASSWORD`, `USER_KEY`, `ENCRYPTION_KEY`). You only need to do this once.
-2.  You can also configure the trading and risk management parameters in `config.py` to suit your strategy.
+2.  You can also configure the trading, strike selection, and risk management parameters in `config.py` to suit your strategy. This includes the `SL_LIMIT_BUFFER` which is recommended to ensure your stop-loss orders get filled.
 
 ### 3. Daily Authentication (Choose One Method)
 
