@@ -14,17 +14,15 @@ import os
 logging.basicConfig(level=logging.INFO)
 
 # Initialize the 5paisa client
-# The cred dictionary is built from the config file
 client = FivePaisaClient(cred={
     "APP_NAME": config.APP_NAME,
     "APP_SOURCE": config.APP_SOURCE,
     "USER_ID": config.USER_ID,
     "PASSWORD": config.PASSWORD,
     "USER_KEY": config.USER_KEY,
-    "ENCRYPTION_KEY": config.ENCRYPTION_KEY,
-    "access_token": config.ACCESS_TOKEN,
-    "client_code": config.CLIENT_CODE
+    "ENCRYPTION_KEY": config.ENCRYPTION_KEY
 })
+client.set_access_token(config.ACCESS_TOKEN, config.CLIENT_CODE)
 
 def get_nearest_weekly_expiry(symbol):
     """

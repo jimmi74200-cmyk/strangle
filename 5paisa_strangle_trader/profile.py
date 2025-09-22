@@ -18,10 +18,9 @@ def get_profile():
             "USER_ID": config.USER_ID,
             "PASSWORD": config.PASSWORD,
             "USER_KEY": config.USER_KEY,
-            "ENCRYPTION_KEY": config.ENCRYPTION_KEY,
-            "access_token": config.ACCESS_TOKEN,
-            "client_code": config.CLIENT_CODE
+            "ENCRYPTION_KEY": config.ENCRYPTION_KEY
         })
+        client.set_access_token(config.ACCESS_TOKEN, config.CLIENT_CODE)
 
         print("Fetching profile details...")
         margin_data = client.margin()
