@@ -39,7 +39,7 @@ def get_nearest_weekly_expiry(symbol):
         min_diff = float('inf')
 
         for expiry in expiry_dates['Expiry']:
-            expiry_date = datetime.datetime.fromtimestamp(expiry['ExpiryDate'] / 1000).date()
+            expiry_date = datetime.datetime.fromtimestamp(int(expiry['ExpiryDate']) / 1000).date()
             diff = (expiry_date - today).days
             if 0 <= diff < min_diff:
                 min_diff = diff
