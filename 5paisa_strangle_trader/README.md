@@ -4,15 +4,17 @@ This project is a Python script that automates an intraday option strangle selli
 
 ## Features
 
-- Login with 5paisa API using OAuth 2.0
+- Login with 5paisa API using either TOTP or a web browser.
 - Automatically fetches the nearest weekly expiry for Nifty, Bank Nifty, etc.
 - Selects call and put strikes based on various methods: ATM, OTM, ITM, nearest premium, or a fixed point gap with equal premiums.
 - Places a short strangle order at a specific time (e.g., 9:30 AM).
--   Places exchange-level Stop-Loss Limit (SL-L) orders for each leg for better reliability.
--   Continuously monitors the overall P&L of the strategy.
--   Squares off all positions if the overall stop-loss, target, or trailing stop-loss is hit.
+- Places exchange-level Stop-Loss Limit (SL-L) orders for each leg for better reliability.
+- Continuously monitors the overall P&L of the strategy.
+- Squares off all positions if the overall stop-loss, target, or trailing stop-loss is hit.
 - Squares off all positions at a specific time (e.g., 3:15 PM).
--   Includes a safety feature to exit the entire strategy if one leg's stop-loss is hit.
+- Includes a safety feature to exit the entire strategy if one leg's stop-loss is hit.
+- Logs all completed trades (both live and paper trades) to a `trade_log.csv` file for performance analysis.
+- Includes a **Paper Trading** mode that simulates trades and logs them accurately for safe testing.
 
 ## How to Use
 
@@ -27,7 +29,8 @@ This project is a Python script that automates an intraday option strangle selli
 ### 2. Configuration
 
 1.  Open the `config.py` file and fill in your 5paisa API credentials (`APP_NAME`, `APP_SOURCE`, `USER_ID`, `PASSWORD`, `USER_KEY`, `ENCRYPTION_KEY`). You only need to do this once.
-2.  You can also configure the trading, strike selection, and risk management parameters in `config.py` to suit your strategy. This includes the `SL_LIMIT_BUFFER` which is recommended to ensure your stop-loss orders get filled.
+2.  You can also configure the trading, strike selection, and risk management parameters in `config.py` to suit your strategy.
+3.  **Paper Trading:** By default, `PAPER_TRADING` is set to `True` for safety. In this mode, the script will simulate trades and log them to `trade_log.csv` with the `Trade_Mode` column set to `PAPER`. To place real trades, you must set this to `False`.
 
 ### 3. Daily Authentication (Choose One Method)
 

@@ -1,29 +1,28 @@
 # 5paisa API credentials
-# Please fill in your credentials after running the authenticate.py script
-cred = {
-    "APP_NAME": "YOUR_APP_NAME",
-    "APP_SOURCE": "YOUR_APP_SOURCE",
-    "USER_ID": "YOUR_USER_ID",
-    "PASSWORD": "YOUR_PASSWORD",
-    "USER_KEY": "YOUR_USER_KEY",
-    "ENCRYPTION_KEY": "YOUR_ENCRYPTION_KEY"
-}
+# Please fill in your credentials after running an authentication script.
+APP_NAME = "YOUR_APP_NAME"
+APP_SOURCE = "YOUR_APP_SOURCE"
+USER_ID = "YOUR_USER_ID"
+PASSWORD = "" # Not used in modern login flows, can be left blank
+USER_KEY = "YOUR_USER_KEY"
+ENCRYPTION_KEY = "YOUR_ENCRYPTION_KEY"
 
-# Access token obtained from authenticate.py
+# Populated by the authentication scripts
 ACCESS_TOKEN = "YOUR_ACCESS_TOKEN"
 CLIENT_CODE = "YOUR_CLIENT_CODE"
 
 # Trading parameters
+PAPER_TRADING = True # Set to False to place real trades
 SYMBOL = "NIFTY"  # NIFTY, BANKNIFTY, etc.
 QTY = 50  # Lot size
 ENTRY_TIME = "09:30"
 EXIT_TIME = "15:15"
 
 # Strike Selection Parameters
-STRIKE_SELECTION_METHOD = "NEAREST_PREMIUM"  # ATM, OTM, ITM, NEAREST_PREMIUM, EQUAL_PREMIUM_GAP
-PREMIUM = 100  # Desired premium for the NEAREST_PREMIUM method
-STRANGLE_STRIKE_DISTANCE = 2 # Number of strikes away from ATM for OTM/ITM strangles
-STRANGLE_GAP_POINTS = 200 # Fixed point gap for EQUAL_PREMIUM_GAP method
+STRIKE_SELECTION_METHOD = "NEAREST_PREMIUM"  # Options: ATM, OTM, ITM, NEAREST_PREMIUM, EQUAL_PREMIUM_GAP
+PREMIUM = 100  # For NEAREST_PREMIUM: The premium value to target for each leg.
+STRANGLE_STRIKE_DISTANCE = 2 # For OTM/ITM: The number of strikes away from the ATM.
+STRANGLE_GAP_POINTS = 200 # For EQUAL_PREMIUM_GAP: The fixed point difference between the Call and Put strikes.
 
 # Risk management parameters
 LEG_WISE_SL_POINTS = 30  # Leg-wise stop-loss in points

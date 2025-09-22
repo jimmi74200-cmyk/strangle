@@ -6,15 +6,24 @@ from py5paisa import FivePaisaClient
 import config
 import json
 import threading
+import csv
+from os.path import isfile
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 
 # Initialize the 5paisa client
-cred = config.cred
-cred['access_token'] = config.ACCESS_TOKEN
-cred['client_code'] = config.CLIENT_CODE
-client = FivePaisaClient(cred=cred)
+# The cred dictionary is built from the config file
+client = FivePaisaClient(cred={
+    "APP_NAME": config.APP_NAME,
+    "APP_SOURCE": config.APP_SOURCE,
+    "USER_ID": config.USER_ID,
+    "PASSWORD": config.PASSWORD,
+    "USER_KEY": config.USER_KEY,
+    "ENCRYPTION_KEY": config.ENCRYPTION_KEY,
+    "access_token": config.ACCESS_TOKEN,
+    "client_code": config.CLIENT_CODE
+})
 
 def get_nearest_weekly_expiry(symbol):
     """
@@ -150,7 +159,7 @@ def select_strikes(option_chain, method, premium, spot_price):
 
 # Global variables
 pending_sl_order_ids = []
-entry_prices = {}
+entry_data = {}
 ltp_store = {}
 max_pnl = 0
 trailing_sl_activated = False
@@ -162,7 +171,7 @@ def place_strangle_order():
     """
     Places a short strangle order and corresponding stop-loss orders.
     """
-    global pending_sl_order_ids, entry_prices, ce_scrip_code, pe_scrip_code
+    global pending_sl_order_ids, entry_data, ce_scrip_code, pe_scrip_code
     logging.info("Placing strangle order...")
     nearest_expiry = get_nearest_weekly_expiry(config.SYMBOL)
     if nearest_expiry:
@@ -179,34 +188,38 @@ def place_strangle_order():
                     pe_scrip_code = next((o['ScripCode'] for o in option_chain if o['StrikeRate'] == pe_strike and o['CPType'] == 'PE'), None)
 
                     if ce_scrip_code and pe_scrip_code:
-                        # Place sell orders
-                        client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                        client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                        logging.info("Strangle orders placed.")
+                        if config.PAPER_TRADING:
+                            logging.info(f"[PAPER TRADE] Would place SELL order for CE {ce_strike} and PE {pe_strike}.")
+                            # Simulate entry for paper trading
+                            entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': 100} # Dummy premium
+                            entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': 100} # Dummy premium
+                        else:
+                            # Place real sell orders
+                            client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            logging.info("Strangle orders placed.")
 
-                        # Wait and poll for positions to get entry prices
-                        time.sleep(5) # Allow time for orders to execute
-                        positions = client.positions()
-                        if positions and 'NetPositionDetail' in positions:
-                            for p in positions['NetPositionDetail']:
-                                if p['ScripCode'] in [ce_scrip_code, pe_scrip_code]:
-                                    entry_prices[p['ScripCode']] = p['SellAvg']
-                                    stop_loss_price = p['SellAvg'] + config.LEG_WISE_SL_POINTS
-
-                                    limit_price = stop_loss_price + config.SL_LIMIT_BUFFER
-                                    sl_order = client.place_order(
-                                        OrderType='B',
-                                        Exchange='N',
-                                        ExchangeType='D',
-                                        ScripCode=p['ScripCode'],
-                                        Qty=p['NetQty'],
-                                        Price=limit_price,
-                                        StopLossPrice=stop_loss_price,
-                                        IsIntraday=True
-                                    )
-                                    if sl_order and 'ExchOrderID' in sl_order:
-                                        pending_sl_order_ids.append(sl_order['ExchOrderID'])
-                                        logging.info(f"Placed SL order for {p['ScripName']} at {stop_loss_price}. Order ID: {sl_order['ExchOrderID']}")
+                            # Wait and poll for positions to get entry prices
+                            time.sleep(5) # Allow time for orders to execute
+                            positions = client.positions()
+                            if positions and 'NetPositionDetail' in positions:
+                                for p in positions['NetPositionDetail']:
+                                    if p['ScripCode'] == ce_scrip_code:
+                                        entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': p['SellAvg']}
+                                        stop_loss_price = p['SellAvg'] + config.LEG_WISE_SL_POINTS
+                                        limit_price = stop_loss_price + config.SL_LIMIT_BUFFER
+                                        sl_order = client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=p['NetQty'], Price=limit_price, StopLossPrice=stop_loss_price, IsIntraday=True)
+                                        if sl_order and 'ExchOrderID' in sl_order:
+                                            pending_sl_order_ids.append(sl_order['ExchOrderID'])
+                                            logging.info(f"Placed SL order for {p['ScripName']} at {stop_loss_price}. Order ID: {sl_order['ExchOrderID']}")
+                                    elif p['ScripCode'] == pe_scrip_code:
+                                        entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': p['SellAvg']}
+                                        stop_loss_price = p['SellAvg'] + config.LEG_WISE_SL_POINTS
+                                        limit_price = stop_loss_price + config.SL_LIMIT_BUFFER
+                                        sl_order = client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=p['NetQty'], Price=limit_price, StopLossPrice=stop_loss_price, IsIntraday=True)
+                                        if sl_order and 'ExchOrderID' in sl_order:
+                                            pending_sl_order_ids.append(sl_order['ExchOrderID'])
+                                            logging.info(f"Placed SL order for {p['ScripName']} at {stop_loss_price}. Order ID: {sl_order['ExchOrderID']}")
 
                         subscribe_to_websocket(ce_scrip_code, pe_scrip_code)
                     else:
@@ -249,18 +262,20 @@ def monitor_and_manage(scrip_code, ltp):
 
     # Calculate overall P&L
     unrealized_pnl = 0
-    for code, entry_price in entry_prices.items():
+    for code, data in entry_data.items():
         if code in ltp_store: # Only calculate for open positions
-            current_ltp = ltp_store.get(code, entry_price)
-            unrealized_pnl += (entry_price - current_ltp) * config.QTY
+            current_ltp = ltp_store.get(code, data['entry_price'])
+            unrealized_pnl += (data['entry_price'] - current_ltp) * config.QTY
 
     total_pnl = unrealized_pnl + realized_pnl
     logging.info(f"Total P&L: {total_pnl} (Realized: {realized_pnl}, Unrealized: {unrealized_pnl})")
 
     # Overall SL and Target
-    if total_pnl <= config.OVERALL_SL or total_pnl >= config.OVERALL_TARGET:
-        logging.info(f"Overall stop-loss or target hit at {total_pnl}. Exiting all positions.")
-        exit_positions()
+    if total_pnl <= config.OVERALL_SL:
+        exit_positions(reason="OVERALL_SL_HIT")
+        return
+    if total_pnl >= config.OVERALL_TARGET:
+        exit_positions(reason="OVERALL_TARGET_HIT")
         return
 
     # Trailing SL
@@ -277,8 +292,7 @@ def monitor_and_manage(scrip_code, ltp):
         trailing_sl = steps * config.TRAILING_PROFIT_LOCKIN
 
         if total_pnl < trailing_sl:
-            logging.info(f"Trailing stop-loss hit at {trailing_sl}. Exiting all positions.")
-            exit_positions()
+            exit_positions(reason="TRAILING_SL_HIT")
             return
 
 def run_websocket(req_data):
@@ -311,13 +325,12 @@ def monitor_positions():
                     if tradebook and 'TradeBookDetail' in tradebook:
                         for trade in tradebook['TradeBookDetail']:
                             if trade['ScripCode'] == closed_leg_scrip_code and trade['BuySell'] == 'B':
-                                realized_pnl = (entry_prices[closed_leg_scrip_code] - trade['Rate']) * trade['Qty']
+                                realized_pnl = (entry_data[closed_leg_scrip_code]['entry_price'] - trade['Rate']) * trade['Qty']
                                 logging.info(f"Realized P&L for closed leg {closed_leg_scrip_code}: {realized_pnl}")
                                 break
 
                     if config.EXIT_STRATEGY_ON_LEG_SL_HIT:
-                        logging.info("Exiting the entire strategy.")
-                        exit_positions()
+                        exit_positions(reason="LEG_SL_HIT")
                         break # Stop monitoring positions
 
                 initial_position_count = current_position_count
@@ -348,31 +361,100 @@ def subscribe_to_websocket(ce_scrip_code, pe_scrip_code):
     pm_thread.daemon = True
     pm_thread.start()
 
-def exit_positions():
+def log_trade_to_csv(trade_data):
     """
-    Cancels pending SL orders and exits all open positions.
+    Logs the details of a completed trade to a CSV file.
     """
-    global pending_sl_order_ids
-    logging.info("Exiting all positions...")
+    file_path = 'trade_log.csv'
+    file_exists = isfile(file_path)
 
-    # Cancel pending SL orders
-    for order_id in pending_sl_order_ids:
-        try:
-            logging.info(f"Cancelling pending SL order: {order_id}")
-            client.cancel_order(order_id)
-        except Exception as e:
-            logging.error(f"Error cancelling order {order_id}: {e}")
+    with open(file_path, 'a', newline='') as csvfile:
+        fieldnames = [
+            'Date', 'Symbol', 'EntryTime', 'ExitTime', 'Call_Strike', 'Put_Strike',
+            'Call_Entry_Premium', 'Put_Entry_Premium', 'Call_Exit_Price', 'Put_Exit_Price',
+            'Final_PnL', 'Exit_Reason', 'Trade_Mode'
+        ]
+        writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
-    pending_sl_order_ids = [] # Clear the list
+        if not file_exists:
+            writer.writeheader()
 
-    # Square off all open positions
-    client.squareoff_all()
-    logging.info("All positions squared off.")
+        writer.writerow(trade_data)
+
+def exit_positions(reason="Unknown"):
+    """
+    Logs the trade, cancels pending SL orders, and exits all open positions.
+    """
+    global pending_sl_order_ids, entry_data, realized_pnl, ce_scrip_code, pe_scrip_code, ltp_store
+    logging.info(f"Exiting all positions due to: {reason}")
+
+    ce_exit_price = 0
+    pe_exit_price = 0
+    final_pnl = 0
+
+    if config.PAPER_TRADING:
+        logging.info("[PAPER TRADE] Simulating exit and logging trade.")
+        ce_exit_price = ltp_store.get(ce_scrip_code, 0)
+        pe_exit_price = ltp_store.get(pe_scrip_code, 0)
+
+        ce_pnl = (entry_data.get(ce_scrip_code, {}).get('entry_price', 0) - ce_exit_price) * config.QTY
+        pe_pnl = (entry_data.get(pe_scrip_code, {}).get('entry_price', 0) - pe_exit_price) * config.QTY
+        final_pnl = ce_pnl + pe_pnl
+    else:
+        # Cancel pending SL orders first
+        for order_id in pending_sl_order_ids:
+            try:
+                logging.info(f"Cancelling pending SL order: {order_id}")
+                client.cancel_order(order_id)
+            except Exception as e:
+                logging.error(f"Error cancelling order {order_id}: {e}")
+
+        # Square off all open positions
+        client.squareoff_all()
+        logging.info("All positions squared off. Waiting for trade confirmation...")
+
+        # Allow time for positions to update
+        time.sleep(5)
+
+        # Get final position details for logging
+        final_positions = client.positions()
+        if final_positions and 'NetPositionDetail' in final_positions:
+            for p in final_positions['NetPositionDetail']:
+                if p['ScripCode'] == ce_scrip_code:
+                    ce_exit_price = p['BuyAvg'] # After squaring off, BuyAvg is the exit price
+                    final_pnl += p['RealizedPL']
+                elif p['ScripCode'] == pe_scrip_code:
+                    pe_exit_price = p['BuyAvg']
+                    final_pnl += p['RealizedPL']
+
+    # Log the trade
+    trade_data = {
+        'Date': datetime.date.today().isoformat(),
+        'Symbol': config.SYMBOL,
+        'EntryTime': config.ENTRY_TIME,
+        'ExitTime': datetime.datetime.now().strftime("%H:%M:%S"),
+        'Call_Strike': entry_data.get(ce_scrip_code, {}).get('strike', 0),
+        'Put_Strike': entry_data.get(pe_scrip_code, {}).get('strike', 0),
+        'Call_Entry_Premium': entry_data.get(ce_scrip_code, {}).get('entry_price', 0),
+        'Put_Entry_Premium': entry_data.get(pe_scrip_code, {}).get('entry_price', 0),
+        'Call_Exit_Price': ce_exit_price,
+        'Put_Exit_Price': pe_exit_price,
+        'Final_PnL': final_pnl,
+        'Exit_Reason': reason,
+        'Trade_Mode': 'PAPER' if config.PAPER_TRADING else 'LIVE'
+    }
+    log_trade_to_csv(trade_data)
+
+    # Clear state for next trade
+    pending_sl_order_ids = []
+    entry_data = {}
+    ltp_store = {}
+    realized_pnl = 0
 
 if __name__ == "__main__":
     logging.info("Starting trading bot...")
     schedule.every().day.at(config.ENTRY_TIME).do(place_strangle_order)
-    schedule.every().day.at(config.EXIT_TIME).do(exit_positions)
+    schedule.every().day.at(config.EXIT_TIME).do(lambda: exit_positions(reason="TIMED_EXIT"))
 
     while True:
         schedule.run_pending()

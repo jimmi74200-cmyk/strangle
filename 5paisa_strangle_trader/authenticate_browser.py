@@ -32,10 +32,17 @@ class TokenHandler(http.server.SimpleHTTPRequestHandler):
 
 if __name__ == "__main__":
     # Initialize the 5paisa client to get the UserKey
-    client = FivePaisaClient(cred=config.cred)
+    client = FivePaisaClient(cred={
+        "APP_NAME": config.APP_NAME,
+        "APP_SOURCE": config.APP_SOURCE,
+        "USER_ID": config.USER_ID,
+        "PASSWORD": config.PASSWORD,
+        "USER_KEY": config.USER_KEY,
+        "ENCRYPTION_KEY": config.ENCRYPTION_KEY
+    })
 
     # Construct the login URL
-    login_url = f"https://dev-openapi.5paisa.com/WebVendorLogin/VLogin/Index?VendorKey={config.cred['USER_KEY']}&ResponseURL={REDIRECT_URL}"
+    login_url = f"https://dev-openapi.5paisa.com/WebVendorLogin/VLogin/Index?VendorKey={config.USER_KEY}&ResponseURL={REDIRECT_URL}"
 
     # Start the local server in a separate thread
     socketserver.TCPServer.allow_reuse_address = True

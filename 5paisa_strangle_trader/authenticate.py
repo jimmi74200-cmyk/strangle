@@ -5,7 +5,14 @@ import config
 # and the get_totp_session function to authenticate and get the access token.
 # The access token will then be saved to the config.py file.
 
-client = FivePaisaClient(cred=config.cred)
+client = FivePaisaClient(cred={
+    "APP_NAME": config.APP_NAME,
+    "APP_SOURCE": config.APP_SOURCE,
+    "USER_ID": config.USER_ID,
+    "PASSWORD": config.PASSWORD,
+    "USER_KEY": config.USER_KEY,
+    "ENCRYPTION_KEY": config.ENCRYPTION_KEY
+})
 
 client_code = input("Enter your client code: ")
 totp = input("Enter your TOTP: ")
