@@ -45,7 +45,7 @@ def get_nearest_weekly_expiry(symbol):
             diff = (expiry_date - today).days
             if 0 <= diff < min_diff:
                 min_diff = diff
-                nearest_expiry = expiry['ExpiryDate']
+                nearest_expiry = int(timestamp_str)
 
         return nearest_expiry
     except Exception as e:
