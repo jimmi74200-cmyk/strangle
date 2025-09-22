@@ -59,7 +59,7 @@ def get_option_chain(symbol, expiry_date):
     try:
         option_chain = client.get_option_chain("N", symbol, expiry_date)
         if not option_chain or 'options' not in option_chain:
-            logging.error("Could not fetch option chain.")
+            logging.error("Could not fetch option chain. API Response: %s", option_chain)
             return None
         return option_chain['options']
     except Exception as e:
