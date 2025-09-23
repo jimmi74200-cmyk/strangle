@@ -58,10 +58,13 @@ def get_option_chain(symbol, expiry_date):
     """
     try:
         option_chain = client.get_option_chain("N", symbol, expiry_date)
-        if not option_chain or 'options' not in option_chain:
+        print("--- RAW OPTION CHAIN RESPONSE ---")
+        print(option_chain)
+        print("---------------------------------")
+        if not option_chain or 'Options' not in option_chain:
             logging.error("Could not fetch option chain. API Response: %s", option_chain)
             return None
-        return option_chain['options']
+        return option_chain['Options']
     except Exception as e:
         logging.error(f"Error getting option chain: {e}")
         return None
