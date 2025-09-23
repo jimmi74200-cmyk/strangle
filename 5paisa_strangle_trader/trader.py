@@ -10,8 +10,6 @@ import csv
 from os.path import isfile
 import os
 import re
-import requests
-import pandas as pd
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -71,41 +69,26 @@ def get_option_chain(symbol, expiry_date):
         logging.error(f"Error getting option chain: {e}")
         return None
 
-def get_scrip_code_from_master(symbol):
+def get_scrip_from_local_file(symbol):
     """
-    Downloads the 5paisa scrip master CSV if not present,
-    and finds the ScripCode for a given symbol in the cash market.
+    Reads the local scrip_data.json file to find the ScripCode for a given symbol.
     """
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    file_path = os.path.join(script_dir, 'scripmaster.csv')
-
-    # Download the file if it doesn't exist
-    if not os.path.exists(file_path):
-        try:
-            logging.info("Scrip master not found locally. Downloading from 5paisa...")
-            url = "https://images.5paisa.com/website/scripmaster-csv-format.csv"
-            response = requests.get(url)
-            response.raise_for_status()  # Raise an exception for bad status codes
-            with open(file_path, 'wb') as f:
-                f.write(response.content)
-            logging.info(f"Scrip master downloaded and saved to {file_path}")
-        except requests.exceptions.RequestException as e:
-            logging.error(f"Failed to download scrip master: {e}")
-            return None
-
-    # Read the CSV and find the scrip code
     try:
-        df = pd.read_csv(file_path)
-        # Find the index scrip in the cash market ('C')
-        scrip = df[(df['Symbol'] == symbol) & (df['ExchType'] == 'C')]
-        if not scrip.empty:
-            scrip_code = scrip.iloc[0]['Scripcode']
-            return int(scrip_code)
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        file_path = os.path.join(script_dir, 'scrip_data.json')
+        with open(file_path, 'r') as f:
+            scrip_data = json.load(f)
+
+        if symbol in scrip_data:
+            return scrip_data[symbol]
         else:
-            logging.error(f"Could not find ScripCode for '{symbol}' in the scrip master.")
+            logging.error(f"ScripCode for '{symbol}' not found in local scrip_data.json.")
             return None
+    except FileNotFoundError:
+        logging.error("scrip_data.json not found. Please ensure the file exists.")
+        return None
     except Exception as e:
-        logging.error(f"Error reading or parsing scrip master file: {e}")
+        logging.error(f"Error reading or parsing scrip_data.json: {e}")
         return None
 
 def get_spot_price(symbol):
@@ -113,18 +96,26 @@ def get_spot_price(symbol):
     Gets the spot price of the underlying asset by dynamically finding its ScripCode.
     """
     try:
-        # Get the scrip code from the master CSV
-        scrip_code = get_scrip_code_from_master(symbol)
+        # Get the scrip info from the local JSON file
+        scrip_info = get_scrip_from_local_file(symbol)
 
-        if not scrip_code:
+        if not scrip_info:
             # The error is already logged by the utility function
             return None
 
-        market_feed = client.fetch_market_feed([{"Exch": "N", "ExchType": "C", "ScripCode": scrip_code}])
+        # The fetch_market_feed expects a list of scrip dictionaries.
+        # We need to construct the dictionary in the format it expects.
+        req_item = {
+            "Exch": scrip_info["Exch"],
+            "ExchType": scrip_info["ExchType"],
+            "ScripCode": scrip_info["ScripCode"]
+        }
+
+        market_feed = client.fetch_market_feed([req_item])
         if market_feed and 'Data' in market_feed and market_feed['Data']:
             return market_feed['Data'][0]['LastRate']
         else:
-            logging.error(f"Could not fetch spot price for ScripCode: {scrip_code}")
+            logging.error(f"Could not fetch spot price. ScripCode: {scrip_info.get('ScripCode')}. API Response: {market_feed}")
             return None
     except Exception as e:
         logging.error(f"An error occurred while getting the spot price for {symbol}: {e}")

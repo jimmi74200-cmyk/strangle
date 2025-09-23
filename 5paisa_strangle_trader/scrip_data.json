@@ -1,0 +1,17 @@
+{
+  "NIFTY": {
+    "ScripCode": 999920000,
+    "Exch": "N",
+    "ExchType": "C"
+  },
+  "BANKNIFTY": {
+    "ScripCode": 999920005,
+    "Exch": "N",
+    "ExchType": "C"
+  },
+  "SENSEX": {
+    "ScripCode": 999901,
+    "Exch": "B",
+    "ExchType": "C"
+  }
+}
