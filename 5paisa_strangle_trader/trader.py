@@ -10,6 +10,8 @@ import csv
 from os.path import isfile
 import os
 import re
+import requests
+import pandas as pd
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -69,24 +71,63 @@ def get_option_chain(symbol, expiry_date):
         logging.error(f"Error getting option chain: {e}")
         return None
 
+def get_scrip_code_from_master(symbol):
+    """
+    Downloads the 5paisa scrip master CSV if not present,
+    and finds the ScripCode for a given symbol in the cash market.
+    """
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    file_path = os.path.join(script_dir, 'scripmaster.csv')
+
+    # Download the file if it doesn't exist
+    if not os.path.exists(file_path):
+        try:
+            logging.info("Scrip master not found locally. Downloading from 5paisa...")
+            url = "https://images.5paisa.com/website/scripmaster-csv-format.csv"
+            response = requests.get(url)
+            response.raise_for_status()  # Raise an exception for bad status codes
+            with open(file_path, 'wb') as f:
+                f.write(response.content)
+            logging.info(f"Scrip master downloaded and saved to {file_path}")
+        except requests.exceptions.RequestException as e:
+            logging.error(f"Failed to download scrip master: {e}")
+            return None
+
+    # Read the CSV and find the scrip code
+    try:
+        df = pd.read_csv(file_path)
+        # Find the index scrip in the cash market ('C')
+        scrip = df[(df['Symbol'] == symbol) & (df['ExchType'] == 'C')]
+        if not scrip.empty:
+            scrip_code = scrip.iloc[0]['Scripcode']
+            return int(scrip_code)
+        else:
+            logging.error(f"Could not find ScripCode for '{symbol}' in the scrip master.")
+            return None
+    except Exception as e:
+        logging.error(f"Error reading or parsing scrip master file: {e}")
+        return None
+
 def get_spot_price(symbol):
     """
-    Gets the spot price of the underlying asset.
+    Gets the spot price of the underlying asset by dynamically finding its ScripCode.
     """
     try:
-        # The scrip code for NIFTY is 999920000. This should be looked up from the scrip master file.
-        scrip_code = 999920000
-        if symbol == "BANKNIFTY":
-            scrip_code = 999920005
+        # Get the scrip code from the master CSV
+        scrip_code = get_scrip_code_from_master(symbol)
+
+        if not scrip_code:
+            # The error is already logged by the utility function
+            return None
 
         market_feed = client.fetch_market_feed([{"Exch": "N", "ExchType": "C", "ScripCode": scrip_code}])
         if market_feed and 'Data' in market_feed and market_feed['Data']:
             return market_feed['Data'][0]['LastRate']
         else:
-            logging.error("Could not fetch spot price.")
+            logging.error(f"Could not fetch spot price for ScripCode: {scrip_code}")
             return None
     except Exception as e:
-        logging.error(f"Error getting spot price: {e}")
+        logging.error(f"An error occurred while getting the spot price for {symbol}: {e}")
         return None
 
 def get_atm_strike(spot_price, strikes):
