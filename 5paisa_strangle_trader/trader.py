@@ -206,17 +206,34 @@ def select_strikes(option_chain, method, premium, spot_price):
             return None, None
     elif method == "EQUAL_PREMIUM_GAP":
         try:
+            strikes = sorted(list(set([o['StrikeRate'] for o in option_chain])))
+            if len(strikes) < 2:
+                logging.error("Not enough strikes in option chain to determine interval.")
+                return None, None
+            strike_interval = strikes[1] - strikes[0]
+
+            atm_strike = get_atm_strike(spot_price, strikes)
+
             ce_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'CE'}
             pe_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'PE'}
+
             valid_pairs = []
-            for ce_strike, ce_premium in ce_options.items():
-                for pe_strike, pe_premium in pe_options.items():
-                    if abs(ce_strike - pe_strike) == config.STRANGLE_GAP_POINTS:
-                        premium_diff = abs(ce_premium - pe_premium)
-                        valid_pairs.append(((ce_strike, pe_strike), premium_diff))
+            # Check a range of strikes around the ATM strike
+            # The range defines how far from the ATM we are willing to look for the PE leg
+            for i in range(-5, 6):
+                put_strike_candidate = atm_strike + (i * strike_interval)
+                call_strike_candidate = put_strike_candidate + config.STRANGLE_GAP_POINTS
+
+                if call_strike_candidate in ce_options and put_strike_candidate in pe_options:
+                    ce_premium = ce_options[call_strike_candidate]
+                    pe_premium = pe_options[put_strike_candidate]
+                    premium_diff = abs(ce_premium - pe_premium)
+                    valid_pairs.append(((call_strike_candidate, put_strike_candidate), premium_diff))
+
             if not valid_pairs:
-                logging.error("No valid pairs found for the given gap.")
+                logging.error("No valid pairs found for the given gap around the ATM.")
                 return None, None
+
             best_pair = min(valid_pairs, key=lambda x: x[1])
             return best_pair[0]
         except Exception as e:
