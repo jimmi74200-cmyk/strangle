@@ -10,6 +10,7 @@ import csv
 from os.path import isfile
 import os
 import re
+import sys
 import websockets
 import asyncio
 import queue
@@ -182,13 +183,41 @@ def get_spot_price(symbol):
 def get_atm_strike(spot_price, strikes):
     return min(strikes, key=lambda x: abs(x - spot_price))
 
+def get_strike_interval(strikes, atm_strike):
+    """
+    Calculates the strike interval reliably by checking the strikes around the ATM.
+    """
+    try:
+        atm_index = strikes.index(atm_strike)
+        if atm_index + 1 < len(strikes):
+            return strikes[atm_index + 1] - strikes[atm_index]
+        elif atm_index > 0:
+            return strikes[atm_index] - strikes[atm_index - 1]
+    except ValueError:
+        # Fallback if atm_strike is not perfectly in the list
+        pass
+
+    # Default fallback if the above methods fail
+    if len(strikes) > 1:
+        # This might be unreliable if the first two strikes are far apart
+        return strikes[1] - strikes[0]
+
+    logging.warning("Could not determine strike interval. Falling back to default 50.")
+    return 50 # Default for NIFTY/BANKNIFTY
+
 def get_otm_strikes(atm_strike, strikes, distance):
-    strike_diff = strikes[1] - strikes[0]
-    return atm_strike + (distance * strike_diff), atm_strike - (distance * strike_diff)
+    strike_diff = get_strike_interval(strikes, atm_strike)
+    logging.info(f"[DEBUG OTM] ATM: {atm_strike}, Distance: {distance}, Strike Interval: {strike_diff}")
+    ce_strike = atm_strike + (distance * strike_diff)
+    pe_strike = atm_strike - (distance * strike_diff)
+    return ce_strike, pe_strike
 
 def get_itm_strikes(atm_strike, strikes, distance):
-    strike_diff = strikes[1] - strikes[0]
-    return atm_strike - (distance * strike_diff), atm_strike + (distance * strike_diff)
+    strike_diff = get_strike_interval(strikes, atm_strike)
+    logging.info(f"[DEBUG ITM] ATM: {atm_strike}, Distance: {distance}, Strike Interval: {strike_diff}")
+    ce_strike = atm_strike - (distance * strike_diff)
+    pe_strike = atm_strike + (distance * strike_diff)
+    return ce_strike, pe_strike
 
 def select_strikes(option_chain, method, premium, spot_price):
     if method == "NEAREST_PREMIUM":
@@ -210,9 +239,9 @@ def select_strikes(option_chain, method, premium, spot_price):
             if len(strikes) < 2:
                 logging.error("Not enough strikes in option chain to determine interval.")
                 return None, None
-            strike_interval = strikes[1] - strikes[0]
 
             atm_strike = get_atm_strike(spot_price, strikes)
+            strike_interval = get_strike_interval(strikes, atm_strike)
 
             ce_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'CE'}
             pe_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'PE'}
@@ -389,15 +418,36 @@ if __name__ == "__main__":
     ws_manager.start()
     logging.info("Waiting for websocket to connect...")
     time.sleep(5)
-    schedule.every().day.at(config.ENTRY_TIME).do(place_strangle_order)
-    schedule.every().day.at(config.EXIT_TIME).do(lambda: exit_positions(reason="TIMED_EXIT"))
-    logging.info("Scheduler started. Waiting for jobs and actions...")
-    while True:
-        schedule.run_pending()
-        try:
-            action = action_queue.get_nowait()
-            if action.get('action') == 'exit':
-                exit_positions(reason=action.get('reason'))
-        except queue.Empty:
-            pass
-        time.sleep(1)
+
+    # Check for immediate start argument
+    if len(sys.argv) > 1 and sys.argv[1] == '--now':
+        # --- INSTANT EXECUTION MODE ---
+        logging.info("'--now' argument detected. Placing order immediately.")
+        place_strangle_order()
+
+        logging.info("Entering monitoring mode for instant trade. Script will exit when trade is closed.")
+        while trade_is_active:
+            try:
+                action = action_queue.get_nowait()
+                if action.get('action') == 'exit':
+                    exit_positions(reason=action.get('reason'))
+            except queue.Empty:
+                pass
+            time.sleep(1)
+        logging.info("Instant trade session finished. Exiting.")
+
+    else:
+        # --- SCHEDULED EXECUTION MODE ---
+        schedule.every().day.at(config.ENTRY_TIME).do(place_strangle_order)
+        schedule.every().day.at(config.EXIT_TIME).do(lambda: exit_positions(reason="TIMED_EXIT"))
+
+        logging.info(f"Scheduler started. Entry at {config.ENTRY_TIME}, Exit at {config.EXIT_TIME}.")
+        while True:
+            schedule.run_pending()
+            try:
+                action = action_queue.get_nowait()
+                if action.get('action') == 'exit':
+                    exit_positions(reason=action.get('reason'))
+            except queue.Empty:
+                pass
+            time.sleep(1)
