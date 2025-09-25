@@ -184,9 +184,6 @@ def get_atm_strike(spot_price, strikes):
     return min(strikes, key=lambda x: abs(x - spot_price))
 
 def get_strike_interval(strikes, atm_strike):
-    """
-    Calculates the strike interval reliably by checking the strikes around the ATM.
-    """
     try:
         atm_index = strikes.index(atm_strike)
         if atm_index + 1 < len(strikes):
@@ -194,27 +191,20 @@ def get_strike_interval(strikes, atm_strike):
         elif atm_index > 0:
             return strikes[atm_index] - strikes[atm_index - 1]
     except ValueError:
-        # Fallback if atm_strike is not perfectly in the list
         pass
-
-    # Default fallback if the above methods fail
     if len(strikes) > 1:
-        # This might be unreliable if the first two strikes are far apart
         return strikes[1] - strikes[0]
-
     logging.warning("Could not determine strike interval. Falling back to default 50.")
-    return 50 # Default for NIFTY/BANKNIFTY
+    return 50
 
 def get_otm_strikes(atm_strike, strikes, distance):
     strike_diff = get_strike_interval(strikes, atm_strike)
-    logging.info(f"[DEBUG OTM] ATM: {atm_strike}, Distance: {distance}, Strike Interval: {strike_diff}")
     ce_strike = atm_strike + (distance * strike_diff)
     pe_strike = atm_strike - (distance * strike_diff)
     return ce_strike, pe_strike
 
 def get_itm_strikes(atm_strike, strikes, distance):
     strike_diff = get_strike_interval(strikes, atm_strike)
-    logging.info(f"[DEBUG ITM] ATM: {atm_strike}, Distance: {distance}, Strike Interval: {strike_diff}")
     ce_strike = atm_strike - (distance * strike_diff)
     pe_strike = atm_strike + (distance * strike_diff)
     return ce_strike, pe_strike
@@ -239,30 +229,22 @@ def select_strikes(option_chain, method, premium, spot_price):
             if len(strikes) < 2:
                 logging.error("Not enough strikes in option chain to determine interval.")
                 return None, None
-
             atm_strike = get_atm_strike(spot_price, strikes)
             strike_interval = get_strike_interval(strikes, atm_strike)
-
             ce_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'CE'}
             pe_options = {o['StrikeRate']: o['LastRate'] for o in option_chain if o['CPType'] == 'PE'}
-
             valid_pairs = []
-            # Check a range of strikes around the ATM strike
-            # The range defines how far from the ATM we are willing to look for the PE leg
             for i in range(-5, 6):
                 put_strike_candidate = atm_strike + (i * strike_interval)
                 call_strike_candidate = put_strike_candidate + config.STRANGLE_GAP_POINTS
-
                 if call_strike_candidate in ce_options and put_strike_candidate in pe_options:
                     ce_premium = ce_options[call_strike_candidate]
                     pe_premium = pe_options[put_strike_candidate]
                     premium_diff = abs(ce_premium - pe_premium)
                     valid_pairs.append(((call_strike_candidate, put_strike_candidate), premium_diff))
-
             if not valid_pairs:
                 logging.error("No valid pairs found for the given gap around the ATM.")
                 return None, None
-
             best_pair = min(valid_pairs, key=lambda x: x[1])
             return best_pair[0]
         except Exception as e:
@@ -286,7 +268,6 @@ def place_strangle_order():
     if trade_is_active:
         logging.warning("A trade is already active. Skipping new order placement.")
         return
-
     logging.info("Attempting to place strangle order...")
     nearest_expiry = get_nearest_weekly_expiry(config.SYMBOL)
     if not nearest_expiry: return
@@ -305,36 +286,81 @@ def place_strangle_order():
 
         if ce_scrip_code and pe_scrip_code:
             if config.PAPER_TRADING:
-                logging.info(f"[PAPER TRADE] Placing SELL order for CE {ce_strike} and PE {pe_strike}.")
-                entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': 100}
-                entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': 100}
+                logging.info(f"[PAPER TRADE] Getting live prices for {ce_strike} CE and {pe_strike} PE to simulate entry.")
+                # Subscribe to get the live prices
+                ws_manager.subscribe([
+                    {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
+                    {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
+                ])
+                # Wait for prices to arrive
+                time.sleep(2) # Brief wait for websocket feed
+
+                ce_entry_price = ltp_store.get(ce_scrip_code)
+                pe_entry_price = ltp_store.get(pe_scrip_code)
+
+                if ce_entry_price and pe_entry_price:
+                    logging.info(f"[PAPER TRADE] Simulating SELL order at CE Price: {ce_entry_price}, PE Price: {pe_entry_price}")
+                    entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_entry_price}
+                    entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_entry_price}
+                    trade_is_active = True
+                    logging.info("Paper trade is now active.")
+                else:
+                    logging.error("Could not fetch live prices for paper trade entry. Halting strategy.")
             else:
+                # Place initial orders
                 client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
                 client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                logging.info("Strangle orders placed. Waiting 5s for execution details...")
-                time.sleep(5)
-                positions = client.positions()
-                if positions and 'NetPositionDetail' in positions:
-                    for p in positions['NetPositionDetail']:
-                        if p['ScripCode'] == ce_scrip_code:
-                            entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': p['SellAvg']}
-                            sl_price = p['SellAvg'] + config.LEG_WISE_SL_POINTS
-                            limit_price = sl_price + config.SL_LIMIT_BUFFER
-                            sl_order = client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=p['NetQty'], Price=limit_price, StopLossPrice=sl_price, IsIntraday=True)
-                            if sl_order and 'ExchOrderID' in sl_order: pending_sl_order_ids.append(sl_order['ExchOrderID'])
-                        elif p['ScripCode'] == pe_scrip_code:
-                            entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': p['SellAvg']}
-                            sl_price = p['SellAvg'] + config.LEG_WISE_SL_POINTS
-                            limit_price = sl_price + config.SL_LIMIT_BUFFER
-                            sl_order = client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=p['NetQty'], Price=limit_price, StopLossPrice=sl_price, IsIntraday=True)
-                            if sl_order and 'ExchOrderID' in sl_order: pending_sl_order_ids.append(sl_order['ExchOrderID'])
+                logging.info("Strangle orders placed. Waiting up to 60s for execution confirmation...")
 
-            ws_manager.subscribe([
-                {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
-                {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
-            ])
-            trade_is_active = True
-            logging.info("Trade is now active.")
+                max_retries = 12
+                retry_interval = 5
+                for i in range(max_retries):
+                    positions = client.positions()
+                    ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None)
+                    pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None)
+
+                    if ce_pos and pe_pos:
+                        logging.info("Both legs executed successfully. Placing stop-loss orders.")
+                        entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_pos['SellAvgRate']}
+                        sl_price_ce = ce_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
+                        limit_price_ce = sl_price_ce + config.SL_LIMIT_BUFFER
+                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=ce_pos['NetQty'], Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
+
+                        entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_pos['SellAvgRate']}
+                        sl_price_pe = pe_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
+                        limit_price_pe = sl_price_pe + config.SL_LIMIT_BUFFER
+                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=pe_pos['NetQty'], Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
+
+                        ws_manager.subscribe([
+                            {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
+                            {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
+                        ])
+                        trade_is_active = True
+                        logging.info("Trade is now active.")
+                        return
+
+                    if i < max_retries - 1:
+                        logging.info(f"One or both legs not yet confirmed. Retrying... ({i+1}/{max_retries})")
+                        if not ce_pos:
+                            logging.info(f"CE leg missing. Re-placing order for scrip {ce_scrip_code}.")
+                            client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                        if not pe_pos:
+                            logging.info(f"PE leg missing. Re-placing order for scrip {pe_scrip_code}.")
+                            client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                        time.sleep(retry_interval)
+
+                logging.critical("CRITICAL ERROR: Failed to confirm execution of both legs after 60s.")
+                positions = client.positions()
+                ce_pos = any(p['ScripCode'] == ce_scrip_code for p in positions)
+                pe_pos = any(p['ScripCode'] == pe_scrip_code for p in positions)
+                if ce_pos and not pe_pos:
+                    logging.critical("PE leg failed. Squaring off naked CE position.")
+                    client.squareoff('N', 'D', ce_scrip_code)
+                elif not ce_pos and pe_pos:
+                    logging.critical("CE leg failed. Squaring off naked PE position.")
+                    client.squareoff('N', 'D', pe_scrip_code)
+                else:
+                    logging.error("Neither leg seems to have executed. Manual check required.")
         else:
             logging.error("Could not find scrip codes for selected strikes.")
     else:
@@ -342,23 +368,19 @@ def place_strangle_order():
 
 def check_trade_conditions():
     global max_pnl, trailing_sl_activated
-    if not all(k in ltp_store for k in [ce_scrip_code, pe_scrip_code]):
-        return
+    if not all(k in ltp_store for k in [ce_scrip_code, pe_scrip_code]): return
     ce_ltp = ltp_store.get(ce_scrip_code)
     pe_ltp = ltp_store.get(pe_scrip_code)
     ce_pnl = (entry_data[ce_scrip_code]['entry_price'] - ce_ltp) * config.QTY
     pe_pnl = (entry_data[pe_scrip_code]['entry_price'] - pe_ltp) * config.QTY
     total_pnl = ce_pnl + pe_pnl + realized_pnl
 
-    if total_pnl <= config.OVERALL_SL:
-        action_queue.put({'action': 'exit', 'reason': 'OVERALL_SL_HIT'})
-    elif total_pnl >= config.OVERALL_TARGET:
-        action_queue.put({'action': 'exit', 'reason': 'OVERALL_TARGET_HIT'})
+    if total_pnl <= config.OVERALL_SL: action_queue.put({'action': 'exit', 'reason': 'OVERALL_SL_HIT'})
+    elif total_pnl >= config.OVERALL_TARGET: action_queue.put({'action': 'exit', 'reason': 'OVERALL_TARGET_HIT'})
     elif trailing_sl_activated:
         if total_pnl > max_pnl: max_pnl = total_pnl
         trailing_sl = (int(max_pnl / config.TRAILING_PROFIT_TRIGGER)) * config.TRAILING_PROFIT_LOCKIN
-        if total_pnl < trailing_sl:
-            action_queue.put({'action': 'exit', 'reason': 'TRAILING_SL_HIT'})
+        if total_pnl < trailing_sl: action_queue.put({'action': 'exit', 'reason': 'TRAILING_SL_HIT'})
     elif not trailing_sl_activated and total_pnl >= config.TRAILING_PROFIT_TRIGGER:
         trailing_sl_activated = True
         logging.info("Trailing stop-loss activated.")
@@ -375,20 +397,19 @@ def exit_positions(reason="Unknown"):
 
     ce_exit_price = ltp_store.get(ce_scrip_code, 0)
     pe_exit_price = ltp_store.get(pe_scrip_code, 0)
-    final_pnl = 0
-    if config.PAPER_TRADING:
-        ce_pnl = (entry_data.get(ce_scrip_code, {}).get('entry_price', 0) - ce_exit_price) * config.QTY
-        pe_pnl = (entry_data.get(pe_scrip_code, {}).get('entry_price', 0) - pe_exit_price) * config.QTY
-        final_pnl = ce_pnl + pe_pnl
-    else:
+
+    if not config.PAPER_TRADING:
         for order_id in pending_sl_order_ids:
             try: client.cancel_order(order_id)
             except Exception as e: logging.error(f"Error cancelling order {order_id}: {e}")
         client.squareoff_all()
         logging.info("All positions squared off.")
-        ce_pnl = (entry_data.get(ce_scrip_code, {}).get('entry_price', 0) - ce_exit_price) * config.QTY
-        pe_pnl = (entry_data.get(pe_scrip_code, {}).get('entry_price', 0) - pe_exit_price) * config.QTY
-        final_pnl = ce_pnl + pe_pnl
+
+    final_pnl = realized_pnl
+    if ce_scrip_code in entry_data:
+        final_pnl += (entry_data[ce_scrip_code]['entry_price'] - ce_exit_price) * config.QTY
+    if pe_scrip_code in entry_data:
+        final_pnl += (entry_data[pe_scrip_code]['entry_price'] - pe_exit_price) * config.QTY
 
     log_trade_to_csv({
         'Date': datetime.date.today().isoformat(), 'Symbol': config.SYMBOL, 'EntryTime': config.ENTRY_TIME, 'ExitTime': datetime.datetime.now().strftime("%H:%M:%S"),
@@ -419,35 +440,25 @@ if __name__ == "__main__":
     logging.info("Waiting for websocket to connect...")
     time.sleep(5)
 
-    # Check for immediate start argument
     if len(sys.argv) > 1 and sys.argv[1] == '--now':
-        # --- INSTANT EXECUTION MODE ---
         logging.info("'--now' argument detected. Placing order immediately.")
         place_strangle_order()
-
         logging.info("Entering monitoring mode for instant trade. Script will exit when trade is closed.")
         while trade_is_active:
             try:
                 action = action_queue.get_nowait()
-                if action.get('action') == 'exit':
-                    exit_positions(reason=action.get('reason'))
-            except queue.Empty:
-                pass
+                if action.get('action') == 'exit': exit_positions(reason=action.get('reason'))
+            except queue.Empty: pass
             time.sleep(1)
         logging.info("Instant trade session finished. Exiting.")
-
     else:
-        # --- SCHEDULED EXECUTION MODE ---
         schedule.every().day.at(config.ENTRY_TIME).do(place_strangle_order)
         schedule.every().day.at(config.EXIT_TIME).do(lambda: exit_positions(reason="TIMED_EXIT"))
-
         logging.info(f"Scheduler started. Entry at {config.ENTRY_TIME}, Exit at {config.EXIT_TIME}.")
         while True:
             schedule.run_pending()
             try:
                 action = action_queue.get_nowait()
-                if action.get('action') == 'exit':
-                    exit_positions(reason=action.get('reason'))
-            except queue.Empty:
-                pass
+                if action.get('action') == 'exit': exit_positions(reason=action.get('reason'))
+            except queue.Empty: pass
             time.sleep(1)
