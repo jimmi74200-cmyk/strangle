@@ -40,6 +40,7 @@ pe_scrip_code = None
 realized_pnl = 0
 trade_is_active = False
 ws_manager = None
+active_legs = {} # To track which legs are currently open
 
 # --- WebSocket Manager ---
 class WebSocketManager:
@@ -264,7 +265,7 @@ def select_strikes(option_chain, method, premium, spot_price):
             return None, None
 
 def place_strangle_order():
-    global pending_sl_order_ids, entry_data, ce_scrip_code, pe_scrip_code, trade_is_active
+    global pending_sl_order_ids, entry_data, ce_scrip_code, pe_scrip_code, trade_is_active, active_legs
     if trade_is_active:
         logging.warning("A trade is already active. Skipping new order placement.")
         return
@@ -302,52 +303,82 @@ def place_strangle_order():
                     logging.info(f"[PAPER TRADE] Simulating SELL order at CE Price: {ce_entry_price}, PE Price: {pe_entry_price}")
                     entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_entry_price}
                     entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_entry_price}
+                    active_legs = {'CE': ce_scrip_code, 'PE': pe_scrip_code}
                     trade_is_active = True
                     logging.info("Paper trade is now active.")
                 else:
                     logging.error("Could not fetch live prices for paper trade entry. Halting strategy.")
             else:
                 # Place initial orders
-                client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                logging.info("Strangle orders placed. Waiting up to 60s for execution confirmation...")
+                ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
 
-                max_retries = 12
-                retry_interval = 5
+                ce_order_id = ce_order_result.get('ExchangeOrderID') if ce_order_result else None
+                pe_order_id = pe_order_result.get('ExchangeOrderID') if pe_order_result else None
+
+                logging.info(f"Strangle orders placed. CE Order ID: {ce_order_id}, PE Order ID: {pe_order_id}. Waiting for execution...")
+
+                # --- Two-Factor Confirmation Loop ---
+                ce_confirmed = False
+                pe_confirmed = False
+                max_retries = 12 # 60 seconds total
                 for i in range(max_retries):
-                    positions = client.positions()
-                    ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None)
-                    pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None)
+                    order_book = client.order_book()
 
-                    if ce_pos and pe_pos:
-                        logging.info("Both legs executed successfully. Placing stop-loss orders.")
-                        entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_pos['SellAvgRate']}
-                        sl_price_ce = ce_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
-                        limit_price_ce = sl_price_ce + config.SL_LIMIT_BUFFER
-                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=abs(ce_pos['NetQty']), Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
+                    # Check CE leg
+                    if not ce_confirmed:
+                        ce_order = next((o for o in order_book if o['ExchangeOrderID'] == ce_order_id), None)
+                        if ce_order and ce_order['OrderStatus'] == 'Fully Executed':
+                            ce_confirmed = True
+                            logging.info("CE leg execution confirmed by order book.")
+                        elif ce_order and ce_order['OrderStatus'] in ['Rejected', 'Cancelled']:
+                            logging.warning(f"CE order {ce_order_id} was {ce_order['OrderStatus']}. Retrying...")
+                            ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            ce_order_id = ce_order_result.get('ExchangeOrderID') if ce_order_result else None
 
-                        entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_pos['SellAvgRate']}
-                        sl_price_pe = pe_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
-                        limit_price_pe = sl_price_pe + config.SL_LIMIT_BUFFER
-                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=abs(pe_pos['NetQty']), Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
+                    # Check PE leg
+                    if not pe_confirmed:
+                        pe_order = next((o for o in order_book if o['ExchangeOrderID'] == pe_order_id), None)
+                        if pe_order and pe_order['OrderStatus'] == 'Fully Executed':
+                            pe_confirmed = True
+                            logging.info("PE leg execution confirmed by order book.")
+                        elif pe_order and pe_order['OrderStatus'] in ['Rejected', 'Cancelled']:
+                            logging.warning(f"PE order {pe_order_id} was {pe_order['OrderStatus']}. Retrying...")
+                            pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            pe_order_id = pe_order_result.get('ExchangeOrderID') if pe_order_result else None
 
-                        ws_manager.subscribe([
-                            {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
-                            {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
-                        ])
-                        trade_is_active = True
-                        logging.info("Trade is now active.")
-                        return
+                    if ce_confirmed and pe_confirmed:
+                        logging.info("Both legs confirmed via order book. Proceeding to position check.")
+                        # Final confirmation via positions
+                        positions = client.positions()
+                        ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None)
+                        pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None)
+                        if ce_pos and pe_pos:
+                            logging.info("Both legs present in positions. Placing stop-loss orders.")
+                            entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_pos['SellAvgRate']}
+                            sl_price_ce = ce_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
+                            limit_price_ce = sl_price_ce + config.SL_LIMIT_BUFFER
+                            client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=abs(ce_pos['NetQty']), Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
 
-                    if i < max_retries - 1:
-                        logging.info(f"One or both legs not yet confirmed. Retrying... ({i+1}/{max_retries})")
-                        if not ce_pos:
-                            logging.info(f"CE leg missing. Re-placing order for scrip {ce_scrip_code}.")
-                            client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                        if not pe_pos:
-                            logging.info(f"PE leg missing. Re-placing order for scrip {pe_scrip_code}.")
-                            client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                        time.sleep(retry_interval)
+                            entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_pos['SellAvgRate']}
+                            sl_price_pe = pe_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
+                            limit_price_pe = sl_price_pe + config.SL_LIMIT_BUFFER
+                            client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=abs(pe_pos['NetQty']), Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
+
+                            ws_manager.subscribe([
+                                {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
+                                {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
+                            ])
+                            active_legs = {'CE': ce_scrip_code, 'PE': pe_scrip_code}
+                            trade_is_active = True
+                            logging.info("Trade is now active.")
+                            return
+                        else:
+                            logging.warning("Order book confirmed but waiting for positions to update...")
+
+                    if i < max_retries -1:
+                        logging.info(f"Waiting for order execution confirmation... ({i+1}/{max_retries})")
+                        time.sleep(5)
 
                 logging.critical("CRITICAL ERROR: Failed to confirm execution of both legs after 60s.")
                 positions = client.positions()
@@ -368,12 +399,24 @@ def place_strangle_order():
 
 def check_trade_conditions():
     global max_pnl, trailing_sl_activated
-    if not all(k in ltp_store for k in [ce_scrip_code, pe_scrip_code]): return
-    ce_ltp = ltp_store.get(ce_scrip_code)
-    pe_ltp = ltp_store.get(pe_scrip_code)
-    ce_pnl = (entry_data[ce_scrip_code]['entry_price'] - ce_ltp) * config.QTY
-    pe_pnl = (entry_data[pe_scrip_code]['entry_price'] - pe_ltp) * config.QTY
-    total_pnl = ce_pnl + pe_pnl + realized_pnl
+
+    total_pnl = realized_pnl
+
+    # Calculate PNL only for active legs
+    if 'CE' in active_legs:
+        ce_ltp = ltp_store.get(ce_scrip_code)
+        if ce_ltp:
+            total_pnl += (entry_data[ce_scrip_code]['entry_price'] - ce_ltp) * config.QTY
+
+    if 'PE' in active_legs:
+        pe_ltp = ltp_store.get(pe_scrip_code)
+        if pe_ltp:
+            total_pnl += (entry_data[pe_scrip_code]['entry_price'] - pe_ltp) * config.QTY
+
+    if not active_legs: # If both legs have been closed individually
+        logging.info("Both legs have been closed. Finalizing trade.")
+        action_queue.put({'action': 'exit', 'reason': 'BOTH_LEGS_CLOSED'})
+        return
 
     if total_pnl <= config.OVERALL_SL: action_queue.put({'action': 'exit', 'reason': 'OVERALL_SL_HIT'})
     elif total_pnl >= config.OVERALL_TARGET: action_queue.put({'action': 'exit', 'reason': 'OVERALL_TARGET_HIT'})
@@ -386,7 +429,7 @@ def check_trade_conditions():
         logging.info("Trailing stop-loss activated.")
 
 def exit_positions(reason="Unknown"):
-    global pending_sl_order_ids, entry_data, realized_pnl, ce_scrip_code, pe_scrip_code, trade_is_active, max_pnl, trailing_sl_activated
+    global pending_sl_order_ids, entry_data, realized_pnl, ce_scrip_code, pe_scrip_code, trade_is_active, max_pnl, trailing_sl_activated, active_legs
     if not trade_is_active: return
     logging.info(f"Exiting all positions due to: {reason}")
     if ws_manager and ce_scrip_code and pe_scrip_code:
@@ -399,11 +442,32 @@ def exit_positions(reason="Unknown"):
     pe_exit_price = ltp_store.get(pe_scrip_code, 0)
 
     if not config.PAPER_TRADING:
+        # First, cancel any pending SL orders to avoid them executing during our exit.
         for order_id in pending_sl_order_ids:
-            try: client.cancel_order(order_id)
-            except Exception as e: logging.error(f"Error cancelling order {order_id}: {e}")
-        client.squareoff_all()
-        logging.info("All positions squared off.")
+            try:
+                client.cancel_order(order_id)
+                logging.info(f"Successfully cancelled pending SL order: {order_id}")
+            except Exception as e:
+                logging.error(f"Error cancelling SL order {order_id}: {e}")
+
+        # Now, explicitly square off each leg of our trade
+        logging.info("Placing explicit market orders to exit positions.")
+        if ce_scrip_code in entry_data:
+            try:
+                # To square off a short position, we place a buy order
+                client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                logging.info(f"Exit order placed for CE leg (ScripCode: {ce_scrip_code}).")
+            except Exception as e:
+                logging.error(f"Error placing exit order for CE leg: {e}")
+
+        if pe_scrip_code in entry_data:
+            try:
+                client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                logging.info(f"Exit order placed for PE leg (ScripCode: {pe_scrip_code}).")
+            except Exception as e:
+                logging.error(f"Error placing exit order for PE leg: {e}")
+
+        logging.info("All exit orders placed.")
 
     final_pnl = realized_pnl
     if ce_scrip_code in entry_data:
@@ -418,10 +482,48 @@ def exit_positions(reason="Unknown"):
         'Call_Exit_Price': ce_exit_price, 'Put_Exit_Price': pe_exit_price, 'Final_PnL': final_pnl, 'Exit_Reason': reason, 'Trade_Mode': 'PAPER' if config.PAPER_TRADING else 'LIVE'
     })
 
-    pending_sl_order_ids, entry_data, realized_pnl, max_pnl = [], {}, 0, 0
+    pending_sl_order_ids, entry_data, realized_pnl, max_pnl, active_legs = [], {}, 0, 0, {}
     trade_is_active, trailing_sl_activated = False, False
     ce_scrip_code, pe_scrip_code = None, None
     logging.info("Trade closed and state reset.")
+
+def monitor_positions():
+    global active_legs, realized_pnl
+    try:
+        if not trade_is_active or not active_legs:
+            return
+
+        live_positions = client.positions()
+        if live_positions is None: # client.positions() can return None on error
+            logging.warning("Could not fetch live positions to monitor legs.")
+            return
+
+        live_scrip_codes = {p['ScripCode'] for p in live_positions}
+
+        closed_legs = []
+        for leg_type, scrip_code in active_legs.items():
+            if scrip_code not in live_scrip_codes:
+                closed_legs.append(leg_type)
+
+        if closed_legs:
+            for leg_type in closed_legs:
+                scrip_code = active_legs.pop(leg_type) # Remove from active and get scrip code
+                logging.warning(f"Detected that the {leg_type} leg (ScripCode: {scrip_code}) has been closed, likely due to SL hit.")
+
+                # Update realized P&L
+                leg_exit_price = ltp_store.get(scrip_code, entry_data[scrip_code]['entry_price']) # Fallback to entry price if LTP not available
+                pnl = (entry_data[scrip_code]['entry_price'] - leg_exit_price) * config.QTY
+                realized_pnl += pnl
+                logging.info(f"Updated realized P&L by {pnl}. New total realized P&L: {realized_pnl}")
+
+                if config.EXIT_STRATEGY_ON_LEG_SL_HIT:
+                    logging.info(f"EXIT_ON_LEG_SL_HIT is True. Exiting remaining position.")
+                    action_queue.put({'action': 'exit', 'reason': 'LEG_SL_HIT_EXIT'})
+                    return # Exit immediately, no need to check other legs
+
+    except Exception as e:
+        logging.error(f"Error in position monitor: {e}")
+
 
 def log_trade_to_csv(trade_data):
     script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -444,17 +546,22 @@ if __name__ == "__main__":
         logging.info("'--now' argument detected. Placing order immediately.")
         place_strangle_order()
         logging.info("Entering monitoring mode for instant trade. Script will exit when trade is closed.")
+        last_monitor_time = time.time()
         while trade_is_active:
+            if time.time() - last_monitor_time > 5:
+                monitor_positions()
+                last_monitor_time = time.time()
             try:
                 action = action_queue.get_nowait()
                 if action.get('action') == 'exit': exit_positions(reason=action.get('reason'))
             except queue.Empty: pass
-            time.sleep(1)
+            time.sleep(0.5)
         logging.info("Instant trade session finished. Exiting.")
     else:
         schedule.every().day.at(config.ENTRY_TIME).do(place_strangle_order)
         schedule.every().day.at(config.EXIT_TIME).do(lambda: exit_positions(reason="TIMED_EXIT"))
-        logging.info(f"Scheduler started. Entry at {config.ENTRY_TIME}, Exit at {config.EXIT_TIME}.")
+        schedule.every(5).seconds.do(monitor_positions)
+        logging.info(f"Scheduler started. Entry at {config.ENTRY_TIME}, Exit at {config.EXIT_TIME}, Position Monitor every 5s.")
         while True:
             schedule.run_pending()
             try:
