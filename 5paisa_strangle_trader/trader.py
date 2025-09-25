@@ -324,12 +324,12 @@ def place_strangle_order():
                         entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_pos['SellAvgRate']}
                         sl_price_ce = ce_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
                         limit_price_ce = sl_price_ce + config.SL_LIMIT_BUFFER
-                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=ce_pos['NetQty'], Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
+                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=abs(ce_pos['NetQty']), Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
 
                         entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_pos['SellAvgRate']}
                         sl_price_pe = pe_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
                         limit_price_pe = sl_price_pe + config.SL_LIMIT_BUFFER
-                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=pe_pos['NetQty'], Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
+                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=abs(pe_pos['NetQty']), Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
 
                         ws_manager.subscribe([
                             {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
