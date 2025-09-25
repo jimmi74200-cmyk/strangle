@@ -313,12 +313,8 @@ def place_strangle_order():
                 ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
                 pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
 
-                if not (ce_order_result and pe_order_result and ce_order_result.get('Status') == 0 and pe_order_result.get('Status') == 0):
-                    logging.critical(f"Initial order placement failed. CE Reason: {ce_order_result.get('Message') if ce_order_result else 'N/A'}. PE Reason: {pe_order_result.get('Message') if pe_order_result else 'N/A'}. Halting strategy.")
-                    return
-
-                ce_broker_id = ce_order_result.get('BrokerOrderID')
-                pe_broker_id = pe_order_result.get('BrokerOrderID')
+                ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result else None
+                pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result else None
                 logging.info(f"Strangle orders placed. CE Broker ID: {ce_broker_id}, PE Broker ID: {pe_broker_id}. Waiting for execution...")
 
                 # --- Robust Confirmation Loop ---
@@ -331,16 +327,36 @@ def place_strangle_order():
                         continue
 
                     if not ce_confirmed:
-                        ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None)
+                        ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None) if ce_broker_id else None
                         if ce_order and ce_order.get('OrderStatus') == 'Fully Executed':
                             ce_confirmed = True
                             logging.info("CE leg execution confirmed by order book.")
+                        elif (ce_order and ce_order.get('OrderStatus') in ['Rejected', 'Cancelled']) or not ce_broker_id:
+                            reason = ce_order.get('Reason', '') if ce_order else 'Initial placement failed'
+                            if "closed" in reason or "not allowed" in reason:
+                                logging.critical(f"CE order rejected because market is closed or not allowed. Reason: {reason}. Halting strategy.")
+                                return
+                            logging.warning(f"CE order placement failed or was rejected. Reason: {reason}. Retrying...")
+                            ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result and ce_order_result.get('Status') == 0 else None
+                            if not ce_broker_id:
+                                logging.error(f"Failed to get new CE Broker ID. Reason: {ce_order_result.get('Message') if ce_order_result else 'N/A'}")
 
                     if not pe_confirmed:
-                        pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None)
+                        pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None) if pe_broker_id else None
                         if pe_order and pe_order.get('OrderStatus') == 'Fully Executed':
                             pe_confirmed = True
                             logging.info("PE leg execution confirmed by order book.")
+                        elif (pe_order and pe_order.get('OrderStatus') in ['Rejected', 'Cancelled']) or not pe_broker_id:
+                            reason = pe_order.get('Reason', '') if pe_order else 'Initial placement failed'
+                            if "closed" in reason or "not allowed" in reason:
+                                logging.critical(f"PE order rejected because market is closed or not allowed. Reason: {reason}. Halting strategy.")
+                                return
+                            logging.warning(f"PE order placement failed or was rejected. Reason: {reason}. Retrying...")
+                            pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result and pe_order_result.get('Status') == 0 else None
+                            if not pe_broker_id:
+                                logging.error(f"Failed to get new PE Broker ID. Reason: {pe_order_result.get('Message') if pe_order_result else 'N/A'}")
 
                     if ce_confirmed and pe_confirmed:
                         logging.info("Both legs confirmed via order book. Proceeding to final position check.")
