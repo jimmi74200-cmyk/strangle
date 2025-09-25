@@ -313,43 +313,38 @@ def place_strangle_order():
                 ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
                 pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
 
-                ce_order_id = ce_order_result.get('ExchangeOrderID') if ce_order_result else None
-                pe_order_id = pe_order_result.get('ExchangeOrderID') if pe_order_result else None
+                if not (ce_order_result and pe_order_result and ce_order_result.get('Status') == 0 and pe_order_result.get('Status') == 0):
+                    logging.critical(f"Initial order placement failed. CE Reason: {ce_order_result.get('Message') if ce_order_result else 'N/A'}. PE Reason: {pe_order_result.get('Message') if pe_order_result else 'N/A'}. Halting strategy.")
+                    return
 
-                logging.info(f"Strangle orders placed. CE Order ID: {ce_order_id}, PE Order ID: {pe_order_id}. Waiting for execution...")
+                ce_broker_id = ce_order_result.get('BrokerOrderID')
+                pe_broker_id = pe_order_result.get('BrokerOrderID')
+                logging.info(f"Strangle orders placed. CE Broker ID: {ce_broker_id}, PE Broker ID: {pe_broker_id}. Waiting for execution...")
 
-                # --- Two-Factor Confirmation Loop ---
-                ce_confirmed = False
-                pe_confirmed = False
-                max_retries = 12 # 60 seconds total
-                for i in range(max_retries):
+                # --- Robust Confirmation Loop ---
+                ce_confirmed, pe_confirmed = False, False
+                for i in range(12): # 60 seconds timeout
                     order_book = client.order_book()
+                    if not order_book:
+                        logging.warning("Order book is empty, waiting...")
+                        time.sleep(5)
+                        continue
 
-                    # Check CE leg
                     if not ce_confirmed:
-                        ce_order = next((o for o in order_book if o['ExchangeOrderID'] == ce_order_id), None)
-                        if ce_order and ce_order['OrderStatus'] == 'Fully Executed':
+                        ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None)
+                        if ce_order and ce_order.get('OrderStatus') == 'Fully Executed':
                             ce_confirmed = True
                             logging.info("CE leg execution confirmed by order book.")
-                        elif ce_order and ce_order['OrderStatus'] in ['Rejected', 'Cancelled']:
-                            logging.warning(f"CE order {ce_order_id} was {ce_order['OrderStatus']}. Retrying...")
-                            ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                            ce_order_id = ce_order_result.get('ExchangeOrderID') if ce_order_result else None
 
-                    # Check PE leg
                     if not pe_confirmed:
-                        pe_order = next((o for o in order_book if o['ExchangeOrderID'] == pe_order_id), None)
-                        if pe_order and pe_order['OrderStatus'] == 'Fully Executed':
+                        pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None)
+                        if pe_order and pe_order.get('OrderStatus') == 'Fully Executed':
                             pe_confirmed = True
                             logging.info("PE leg execution confirmed by order book.")
-                        elif pe_order and pe_order['OrderStatus'] in ['Rejected', 'Cancelled']:
-                            logging.warning(f"PE order {pe_order_id} was {pe_order['OrderStatus']}. Retrying...")
-                            pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                            pe_order_id = pe_order_result.get('ExchangeOrderID') if pe_order_result else None
 
                     if ce_confirmed and pe_confirmed:
-                        logging.info("Both legs confirmed via order book. Proceeding to position check.")
-                        # Final confirmation via positions
+                        logging.info("Both legs confirmed via order book. Proceeding to final position check.")
+                        time.sleep(1) # Allow a moment for position to update
                         positions = client.positions()
                         ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None)
                         pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None)
@@ -374,11 +369,10 @@ def place_strangle_order():
                             logging.info("Trade is now active.")
                             return
                         else:
-                            logging.warning("Order book confirmed but waiting for positions to update...")
+                             logging.warning("Order book confirmed but waiting for positions to update...")
 
-                    if i < max_retries -1:
-                        logging.info(f"Waiting for order execution confirmation... ({i+1}/{max_retries})")
-                        time.sleep(5)
+                    logging.info(f"Waiting for order execution confirmation... ({i+1}/12)")
+                    time.sleep(5)
 
                 logging.critical("CRITICAL ERROR: Failed to confirm execution of both legs after 60s.")
                 positions = client.positions()
