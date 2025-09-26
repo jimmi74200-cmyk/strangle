@@ -347,28 +347,29 @@ def place_strangle_order():
                         return
 
                     # If a leg is missing, check the order book for a potential rejection
-                    order_book = client.order_book()
-                    if not ce_pos:
-                        ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None) if ce_broker_id and order_book else None
-                        if ce_order and ce_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
-                            reason = ce_order.get('Reason', '')
-                            if "closed" in reason:
-                                logging.critical(f"CE order rejected because market is closed. Reason: {reason}. Halting strategy.")
-                                return
-                            logging.warning(f"CE order {ce_broker_id} was {ce_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
-                            ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                            ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result and ce_order_result.get('Status') == 0 else None
+                    if i > 1: # Start checking order book only after a couple of seconds
+                        order_book = client.order_book()
+                        if not ce_pos:
+                            ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None) if ce_broker_id and order_book else None
+                            if ce_order and ce_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
+                                reason = ce_order.get('Reason', '')
+                                if "closed" in reason:
+                                    logging.critical(f"CE order rejected because market is closed. Reason: {reason}. Halting strategy.")
+                                    return
+                                logging.warning(f"CE order {ce_broker_id} was {ce_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
+                                ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                                ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result and ce_order_result.get('Status') == 0 else None
 
-                    if not pe_pos:
-                        pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None) if pe_broker_id and order_book else None
-                        if pe_order and pe_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
-                            reason = pe_order.get('Reason', '')
-                            if "closed" in reason:
-                                logging.critical(f"PE order rejected because market is closed. Reason: {reason}. Halting strategy.")
-                                return
-                            logging.warning(f"PE order {pe_broker_id} was {pe_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
-                            pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                            pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result and pe_order_result.get('Status') == 0 else None
+                        if not pe_pos:
+                            pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None) if pe_broker_id and order_book else None
+                            if pe_order and pe_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
+                                reason = pe_order.get('Reason', '')
+                                if "closed" in reason:
+                                    logging.critical(f"PE order rejected because market is closed. Reason: {reason}. Halting strategy.")
+                                    return
+                                logging.warning(f"PE order {pe_broker_id} was {pe_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
+                                pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                                pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result and pe_order_result.get('Status') == 0 else None
 
                     logging.info(f"Waiting for position confirmation... ({i+1}/12)")
                     time.sleep(5)
