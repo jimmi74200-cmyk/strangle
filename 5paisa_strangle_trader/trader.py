@@ -317,77 +317,60 @@ def place_strangle_order():
                 pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result else None
                 logging.info(f"Strangle orders placed. CE Broker ID: {ce_broker_id}, PE Broker ID: {pe_broker_id}. Waiting for execution...")
 
-                # --- Robust Confirmation Loop ---
-                ce_confirmed, pe_confirmed = False, False
+                # --- Position-First Confirmation Loop ---
+                ce_pos, pe_pos = None, None
                 for i in range(12): # 60 seconds timeout
-                    order_book = client.order_book()
-                    if not order_book:
-                        logging.warning("Order book is empty, waiting...")
-                        time.sleep(5)
-                        continue
-
-                    if not ce_confirmed:
-                        ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None) if ce_broker_id else None
-                        if ce_order and ce_order.get('OrderStatus') == 'Fully Executed':
-                            ce_confirmed = True
-                            logging.info("CE leg execution confirmed by order book.")
-                        elif (ce_order and ce_order.get('OrderStatus') in ['Rejected', 'Cancelled']) or not ce_broker_id:
-                            reason = ce_order.get('Reason', '') if ce_order else 'Initial placement failed'
-                            if "closed" in reason or "not allowed" in reason:
-                                logging.critical(f"CE order rejected because market is closed or not allowed. Reason: {reason}. Halting strategy.")
-                                return
-                            logging.warning(f"CE order placement failed or was rejected. Reason: {reason}. Retrying...")
-                            ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                            ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result and ce_order_result.get('Status') == 0 else None
-                            if not ce_broker_id:
-                                logging.error(f"Failed to get new CE Broker ID. Reason: {ce_order_result.get('Message') if ce_order_result else 'N/A'}")
-
-                    if not pe_confirmed:
-                        pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None) if pe_broker_id else None
-                        if pe_order and pe_order.get('OrderStatus') == 'Fully Executed':
-                            pe_confirmed = True
-                            logging.info("PE leg execution confirmed by order book.")
-                        elif (pe_order and pe_order.get('OrderStatus') in ['Rejected', 'Cancelled']) or not pe_broker_id:
-                            reason = pe_order.get('Reason', '') if pe_order else 'Initial placement failed'
-                            if "closed" in reason or "not allowed" in reason:
-                                logging.critical(f"PE order rejected because market is closed or not allowed. Reason: {reason}. Halting strategy.")
-                                return
-                            logging.warning(f"PE order placement failed or was rejected. Reason: {reason}. Retrying...")
-                            pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                            pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result and pe_order_result.get('Status') == 0 else None
-                            if not pe_broker_id:
-                                logging.error(f"Failed to get new PE Broker ID. Reason: {pe_order_result.get('Message') if pe_order_result else 'N/A'}")
-
-                    if ce_confirmed and pe_confirmed:
-                        logging.info("Both legs confirmed via order book. Proceeding to final position check.")
-                        time.sleep(1) # Allow a moment for position to update
-                        positions = client.positions()
+                    positions = client.positions()
+                    if positions:
                         ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None)
                         pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None)
-                        if ce_pos and pe_pos:
-                            logging.info("Both legs present in positions. Placing stop-loss orders.")
-                            entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_pos['SellAvgRate']}
-                            sl_price_ce = ce_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
-                            limit_price_ce = sl_price_ce + config.SL_LIMIT_BUFFER
-                            client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=abs(ce_pos['NetQty']), Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
 
-                            entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_pos['SellAvgRate']}
-                            sl_price_pe = pe_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
-                            limit_price_pe = sl_price_pe + config.SL_LIMIT_BUFFER
-                            client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=abs(pe_pos['NetQty']), Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
+                    if ce_pos and pe_pos:
+                        logging.info("Both legs confirmed in positions.")
+                        entry_data[ce_scrip_code] = {'strike': ce_strike, 'entry_price': ce_pos['SellAvgRate']}
+                        sl_price_ce = ce_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
+                        limit_price_ce = sl_price_ce + config.SL_LIMIT_BUFFER
+                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=abs(ce_pos['NetQty']), Price=limit_price_ce, StopLossPrice=sl_price_ce, IsIntraday=True)
 
-                            ws_manager.subscribe([
-                                {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
-                                {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
-                            ])
-                            active_legs = {'CE': ce_scrip_code, 'PE': pe_scrip_code}
-                            trade_is_active = True
-                            logging.info("Trade is now active.")
-                            return
-                        else:
-                             logging.warning("Order book confirmed but waiting for positions to update...")
+                        entry_data[pe_scrip_code] = {'strike': pe_strike, 'entry_price': pe_pos['SellAvgRate']}
+                        sl_price_pe = pe_pos['SellAvgRate'] + config.LEG_WISE_SL_POINTS
+                        limit_price_pe = sl_price_pe + config.SL_LIMIT_BUFFER
+                        client.place_order(OrderType='B', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=abs(pe_pos['NetQty']), Price=limit_price_pe, StopLossPrice=sl_price_pe, IsIntraday=True)
 
-                    logging.info(f"Waiting for order execution confirmation... ({i+1}/12)")
+                        ws_manager.subscribe([
+                            {"Exch": "N", "ExchType": "D", "ScripCode": ce_scrip_code},
+                            {"Exch": "N", "ExchType": "D", "ScripCode": pe_scrip_code}
+                        ])
+                        active_legs = {'CE': ce_scrip_code, 'PE': pe_scrip_code}
+                        trade_is_active = True
+                        logging.info("Trade is now active.")
+                        return
+
+                    # If a leg is missing, check the order book for a potential rejection
+                    order_book = client.order_book()
+                    if not ce_pos:
+                        ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None) if ce_broker_id and order_book else None
+                        if ce_order and ce_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
+                            reason = ce_order.get('Reason', '')
+                            if "closed" in reason:
+                                logging.critical(f"CE order rejected because market is closed. Reason: {reason}. Halting strategy.")
+                                return
+                            logging.warning(f"CE order {ce_broker_id} was {ce_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
+                            ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result and ce_order_result.get('Status') == 0 else None
+
+                    if not pe_pos:
+                        pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None) if pe_broker_id and order_book else None
+                        if pe_order and pe_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
+                            reason = pe_order.get('Reason', '')
+                            if "closed" in reason:
+                                logging.critical(f"PE order rejected because market is closed. Reason: {reason}. Halting strategy.")
+                                return
+                            logging.warning(f"PE order {pe_broker_id} was {pe_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
+                            pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
+                            pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result and pe_order_result.get('Status') == 0 else None
+
+                    logging.info(f"Waiting for position confirmation... ({i+1}/12)")
                     time.sleep(5)
 
                 logging.critical("CRITICAL ERROR: Failed to confirm execution of both legs after 60s.")
