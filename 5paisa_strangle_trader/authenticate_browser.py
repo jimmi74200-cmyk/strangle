@@ -34,7 +34,7 @@ class TokenHandler(http.server.SimpleHTTPRequestHandler):
             self.wfile.write(b"<h1>Login Failed.</h1><p>Could not retrieve token. Please try again.</p>")
 
         # Shutdown the server after handling the request
-        threading.Thread(target=httpd.shutdown).start()
+        threading.Thread(target=self.server.shutdown).start()
 
 if __name__ == "__main__":
     # Initialize the 5paisa client to get the UserKey

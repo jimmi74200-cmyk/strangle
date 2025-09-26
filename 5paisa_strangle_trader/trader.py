@@ -313,17 +313,15 @@ def place_strangle_order():
                 ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
                 pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
 
-                ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result else None
-                pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result else None
+                ce_broker_id = ce_order_result.get('BrokerOrderId') if ce_order_result else None
+                pe_broker_id = pe_order_result.get('BrokerOrderId') if pe_order_result else None
                 logging.info(f"Strangle orders placed. CE Broker ID: {ce_broker_id}, PE Broker ID: {pe_broker_id}. Waiting for execution...")
 
-                # --- Position-First Confirmation Loop ---
-                ce_pos, pe_pos = None, None
+                # --- Simplified Position-First Confirmation Loop ---
                 for i in range(12): # 60 seconds timeout
                     positions = client.positions()
-                    if positions:
-                        ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None)
-                        pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None)
+                    ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None) if positions else None
+                    pe_pos = next((p for p in positions if p['ScripCode'] == pe_scrip_code), None) if positions else None
 
                     if ce_pos and pe_pos:
                         logging.info("Both legs confirmed in positions.")
@@ -350,7 +348,7 @@ def place_strangle_order():
                     if i > 1: # Start checking order book only after a couple of seconds
                         order_book = client.order_book()
                         if not ce_pos:
-                            ce_order = next((o for o in order_book if o.get('BrokerOrderID') == ce_broker_id), None) if ce_broker_id and order_book else None
+                            ce_order = next((o for o in order_book if str(o.get('BrokerOrderId')) == str(ce_broker_id)), None) if ce_broker_id and order_book else None
                             if ce_order and ce_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
                                 reason = ce_order.get('Reason', '')
                                 if "closed" in reason:
@@ -358,10 +356,10 @@ def place_strangle_order():
                                     return
                                 logging.warning(f"CE order {ce_broker_id} was {ce_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
                                 ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                                ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result and ce_order_result.get('Status') == 0 else None
+                                ce_broker_id = ce_order_result.get('BrokerOrderId') if ce_order_result and ce_order_result.get('Status') == 0 else None
 
                         if not pe_pos:
-                            pe_order = next((o for o in order_book if o.get('BrokerOrderID') == pe_broker_id), None) if pe_broker_id and order_book else None
+                            pe_order = next((o for o in order_book if str(o.get('BrokerOrderId')) == str(pe_broker_id)), None) if pe_broker_id and order_book else None
                             if pe_order and pe_order.get('OrderStatus') in ['Rejected', 'Cancelled']:
                                 reason = pe_order.get('Reason', '')
                                 if "closed" in reason:
@@ -369,7 +367,7 @@ def place_strangle_order():
                                     return
                                 logging.warning(f"PE order {pe_broker_id} was {pe_order.get('OrderStatus')}. Reason: {reason}. Retrying...")
                                 pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
-                                pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result and pe_order_result.get('Status') == 0 else None
+                                pe_broker_id = pe_order_result.get('BrokerOrderId') if pe_order_result and pe_order_result.get('Status') == 0 else None
 
                     logging.info(f"Waiting for position confirmation... ({i+1}/12)")
                     time.sleep(5)

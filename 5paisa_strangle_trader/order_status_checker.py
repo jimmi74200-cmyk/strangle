@@ -6,9 +6,9 @@ import json
 # Configure logging to show info-level messages
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-def check_order_status():
+def check_status():
     """
-    A simple tool to fetch the order book and check the status of a specific order.
+    A tool to independently check the order book and position book.
     """
     try:
         # --- Authenticate ---
@@ -30,42 +30,51 @@ def check_order_status():
     # --- Main Loop ---
     while True:
         try:
-            # --- Get User Input ---
-            broker_id_str = input("\nEnter Broker Order ID to check (or 'q' to quit): ").strip()
-            if broker_id_str.lower() == 'q':
-                break
+            print("\n--- New Query ---")
+            # --- 1. Check Order Book ---
+            broker_id_str = input("Enter Broker Order ID to check in ORDER BOOK (or press Enter to skip): ").strip()
+            if broker_id_str:
+                if broker_id_str.lower() == 'q': break
 
-            if not broker_id_str.isdigit():
-                logging.warning("Please enter a valid numeric Broker Order ID.")
-                continue
+                logging.info("Fetching order book...")
+                order_book = client.order_book()
 
-            broker_id = int(broker_id_str)
+                if not order_book:
+                    logging.warning("ORDER BOOK: Is empty or could not be fetched.")
+                else:
+                    # Compare BrokerOrderId as a string, with correct case
+                    order_details = next((o for o in order_book if str(o.get('BrokerOrderId')) == broker_id_str), None)
+                    if order_details:
+                        logging.info(f"--- ORDER BOOK: FOUND (BrokerOrderId: {broker_id_str}) ---")
+                        logging.info(json.dumps(order_details, indent=2))
+                    else:
+                        logging.warning(f"--- ORDER BOOK: Order with Broker ID {broker_id_str} was NOT FOUND. ---")
 
-            # --- Fetch Order Book ---
-            logging.info("Fetching order book...")
-            order_book = client.order_book()
+            # --- 2. Check Position Book ---
+            scrip_code_str = input("Enter Scrip Code to check in POSITION BOOK (or press Enter to skip): ").strip()
+            if scrip_code_str:
+                if scrip_code_str.lower() == 'q': break
+                scrip_code = int(scrip_code_str)
 
-            if not order_book:
-                logging.warning("Could not fetch order book or it is empty.")
-                continue
+                logging.info("Fetching position book...")
+                positions = client.positions()
 
-            # --- Find and Display Order ---
-            order_details = next((o for o in order_book if o.get('BrokerOrderID') == broker_id), None)
-
-            if order_details:
-                logging.info(f"--- ORDER FOUND (BrokerOrderID: {broker_id}) ---")
-                # Pretty print the JSON details
-                logging.info(json.dumps(order_details, indent=2))
-                logging.info("--- END OF DETAILS ---")
-            else:
-                logging.warning(f"Order with Broker ID {broker_id} was NOT FOUND in the order book.")
+                if not positions:
+                    logging.warning("POSITION BOOK: Is empty or could not be fetched.")
+                else:
+                    position_details = next((p for p in positions if p.get('ScripCode') == scrip_code), None)
+                    if position_details:
+                        logging.info(f"--- POSITION BOOK: FOUND (ScripCode: {scrip_code}) ---")
+                        logging.info(json.dumps(position_details, indent=2))
+                    else:
+                        logging.warning(f"--- POSITION BOOK: Position for ScripCode {scrip_code} was NOT FOUND. ---")
 
         except ValueError:
-            logging.error("Invalid input. Please enter a numeric Broker Order ID.")
+            logging.error("Invalid input. Please enter a numeric ID.")
         except Exception as e:
             logging.error(f"An unexpected error occurred: {e}")
 
-    logging.info("Exiting order status checker.")
+    logging.info("Exiting status checker.")
 
 if __name__ == "__main__":
-    check_order_status()
+    check_status()
