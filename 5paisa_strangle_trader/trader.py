@@ -313,11 +313,11 @@ def place_strangle_order():
                 ce_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=ce_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
                 pe_order_result = client.place_order(OrderType='S', Exchange='N', ExchangeType='D', ScripCode=pe_scrip_code, Qty=config.QTY, Price=0, IsIntraday=True)
 
-                ce_broker_id = ce_order_result.get('BrokerOrderId') if ce_order_result else None
-                pe_broker_id = pe_order_result.get('BrokerOrderId') if pe_order_result else None
+                ce_broker_id = ce_order_result.get('BrokerOrderID') if ce_order_result else None
+                pe_broker_id = pe_order_result.get('BrokerOrderID') if pe_order_result else None
                 logging.info(f"Strangle orders placed. CE Broker ID: {ce_broker_id}, PE Broker ID: {pe_broker_id}. Waiting for execution...")
 
-                # --- Simplified Position-First Confirmation Loop ---
+                # --- Final Position-First Confirmation Loop ---
                 for i in range(12): # 60 seconds timeout
                     positions = client.positions()
                     ce_pos = next((p for p in positions if p['ScripCode'] == ce_scrip_code), None) if positions else None
